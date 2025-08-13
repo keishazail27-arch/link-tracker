@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dashboard Link Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; margin: 16px; }
+    h1 { margin-bottom: 8px; }
+    #map { height: 360px; border-radius: 12px; margin: 12px 0 20px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media(min-width: 900px){ .grid { grid-template-columns: 1fr 1fr; } }
+    .card { border: 1px solid #eee; border-radius: 12px; padding: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: #fafafa; position: sticky; top: 0; }
+    .table-wrap { max-height: 420px; overflow: auto; border: 1px solid #eee; border-radius: 12px; }
+    .muted { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Dashboard Link Tracker</h1>
+  <div class="muted">Auto-refresh tiap 5 detik • Waktu ditampilkan dalam WIB</div>
+
+  <div id="map"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Statistik Negara (Bar)</h3>
+      <canvas id="countryChart"></canvas>
+    </div>
+    <div class="card">
+      <h3>Statistik Perangkat (Pie)</h3>
+      <canvas id="deviceChart"></canvas>
+    </div>
+  </div>
+
+  <h2>Log Pengunjung</h2>
+  <div class="table-wrap">
+    <table id="logTable">
+      <thead>
+        <tr>
+          <th>Waktu (WIB)</th>
+          <th>IP</th>
+          <th>Negara</th>
+          <th>Perangkat</th>
+          <th>OS</th>
+          <th>Browser</th>
+          <th>Redirect</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script>
+    // Inisialisasi peta
+    const map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    let markers = [];
+    let countryChart, deviceChart;
+
+    function clearMarkers() {
+      markers.forEach(m => map.removeLayer(m));
+      markers = [];
+    }
+
+    function fitToMarkers() {
+      const group = L.featureGroup(markers);
+      try {
+        map.fitBounds(group.getBounds(), { padding: [20, 20] });
+      } catch(e){}
+    }
+
+    function createOrUpdateBar(ctx, labels, values) {
+      if (countryChart) countryChart.destroy();
+      countryChart = new Chart(ctx, {
+        type: "bar",
+        data: { labels, datasets: [{ label: "Klik per Negara", data: values }] },
+        options: { responsive: true, maintainAspectRatio: true }
+      });
+    }
+
+    function createOrUpdatePie(ctx, labels, values) {
+      if (deviceChart) deviceChart.destroy();
+      deviceChart = new Chart(ctx, {
+        type: "pie",
+        data: { labels, datasets: [{ data: values }] },
+        options: { responsive: true, maintainAspectRatio: true }
+      });
+    }
+
+    async function loadData() {
+      const res = await fetch('/api/logs');
+      const data = await res.json();
+
+      // ----- Peta -----
+      clearMarkers();
+      data.forEach(d => {
+        if (d.latitude != null && d.longitude != null) {
+          const marker = L.marker([d.latitude, d.longitude])
+            .addTo(map)
+            .bindPopup(`${d.ip} — ${d.country}<br>${d.time}`);
+          markers.push(marker);
+        }
+      });
+      if (markers.length) fitToMarkers();
+
+      // ----- Statistik Negara -----
+      const countryCount = {};
+      data.forEach(d => {
+        const key = d.country || "Unknown";
+        countryCount[key] = (countryCount[key] || 0) + 1;
+      });
+      createOrUpdateBar(
+        document.getElementById("countryChart"),
+        Object.keys(countryCount),
+        Object.values(countryCount)
+      );
+
+      // ----- Statistik Perangkat -----
+      const deviceCount = {};
+      data.forEach(d => {
+        const key = d.device || "Desktop";
+        deviceCount[key] = (deviceCount[key] || 0) + 1;
+      });
+      createOrUpdatePie(
+        document.getElementById("deviceChart"),
+        Object.keys(deviceCount),
+        Object.values(deviceCount)
+      );
+
+      // ----- Tabel -----
+      const tbody = document.querySelector("#logTable tbody");
+      tbody.innerHTML = "";
+      data.forEach(d => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${d.time || ""}</td>
+          <td>${d.ip || ""}</td>
+          <td>${d.country || ""}</td>
+          <td>${d.device || ""}</td>
+          <td>${d.os || ""}</td>
+          <td>${d.browser || ""}</td>
+          <td><a href="${d.dest || "#"}" target="_blank" rel="noopener">buka</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    loadData();
+    setInterval(loadData, 5000);
+  </script>
+</body>
+</html>
